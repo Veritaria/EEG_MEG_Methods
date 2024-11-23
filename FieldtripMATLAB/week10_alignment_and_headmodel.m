@@ -20,6 +20,7 @@ else
 end
 
 
+
 % Add fieldtrip to path
 addpath(fullfile(fieldtrip_path));
 ft_defaults;
@@ -28,7 +29,7 @@ ft_defaults;
 sjs = ...
     ['004']; % todo change to make BIDS compliant
 %%
-
+dataPath = '/Users/mrugankdake/Library/CloudStorage/GoogleDrive-mdd9787@nyu.edu/My Drive/Coursework/EEG MEG methods/ClassData/EEGBids';
 acq = '';
 code_ = sjs(1,:); % pick one subject
 
@@ -50,73 +51,33 @@ cfg.continuous = 'yes';
 hdr = ft_read_header(cfg.dataset);
 
 %% LOAD IN ELEC AND HEADSHAPE
-opts = delimitedTextImportOptions("NumVariables", 7);
-% Specify range and delimiter
-opts.DataLines = [2, Inf];
-opts.Delimiter = "\t";
-% Specify column names and types
-opts.VariableNames = ["name1", "x1", "y1", "z1", "Var5", "Var6", "Var7"];
-opts.SelectedVariableNames = ["name1", "x1", "y1", "z1"];
-opts.VariableTypes = ["string", "double", "double", "double", "string", "string", "string"];
+tbl = readtable(fullfile(eeg_pth_, ['sub-' code_ '_electrodes.tsv']), 'FileType', 'text');
 
-% Specify file level properties
-opts.ExtraColumnsRule = "ignore";
-opts.EmptyLineRule = "read";
-
-% Specify variable properties
-opts = setvaropts(opts, ["name1", "Var5", "Var6", "Var7"], "WhitespaceRule", "preserve");
-opts = setvaropts(opts, ["name1", "Var5", "Var6", "Var7"], "EmptyFieldRule", "auto");
-tbl = readtable(fullfile(eeg_pth_, ['sub-' code_ '_electrodes.tsv']), opts);
-
-%% Keep the electrode positions
+% Keep the electrode positions
 n_elec = 256;
 elec = [];
 elec.label = hdr.label(1:n_elec);
 elec.elecpos = ...
-    [tbl.x1(1:n_elec), ...
-    tbl.y1(1:n_elec), ...
-    tbl.z1(1:n_elec)];
+    [tbl.x(1:n_elec), ...
+    tbl.y(1:n_elec), ...
+    tbl.z(1:n_elec)];
 elec.chanpos = elec.elecpos;
 elec.unit = 'mm';
 n_elec = size(elec.elecpos,1);
 %% read in the headhape too
-opts = delimitedTextImportOptions("NumVariables", 6);
-
-% Specify range and delimiter
-opts.DataLines = [2, Inf];
-opts.Delimiter = "\t";
-
-% Specify column names and types
-opts.VariableNames = ["X", "y", "z", "label", "VarName5", "VarName6"];
-opts.VariableTypes = ["double", "double", "double", "categorical", "string", "string"];
-
-% Specify file level properties
-opts.ExtraColumnsRule = "ignore";
-opts.EmptyLineRule = "read";
-
 % Specify variable properties
-opts = setvaropts(opts, ["VarName5", "VarName6"], "WhitespaceRule", "preserve");
-opts = setvaropts(opts, ["label", "VarName5", "VarName6"], "EmptyFieldRule", "auto");
+tbl = readtable(fullfile(anat_pth_, ['sub-' code_ '_headshape.tsv']), 'FileType', 'text');
+tbl.Properties.VariableNames = {'Label', 'X', 'Y', 'Z'};
 
-% Specify variable properties
-tbl = readtable(fullfile(anat_pth_, ['sub-' code_ '_headshape.tsv']), opts);
-%%  headshape information + fiducials
+%  headshape information + fiducials
 % Step 2: Extract the relevant data
-headshape.pos = [tbl.X, tbl.y, tbl.z];
-
+tmp_pos = [tbl.X, tbl.Y, tbl.Z] * 10;;
+pos_new = tmp_pos(4:end,:);
+pos_new(1:3, :) = (tmp_pos(1:3,:) + tmp_pos(4:6,:))./2;
+headshape.pos = pos_new;
 % Step 3: Create the FieldTrip headshape structure
 headshape.unit = 'mm'; % or 'cm', depending on your data
-headshape.label = cell(size(headshape.pos,1),1); % add labels if available
-n_hs = numel(headshape.label);
-for ll = 1: numel(headshape.label)
-    if ll < 4; headshape.label{ll}; % skip... = string(tbl.label(ll));
-    else
-        headshape.label{ll} = 'extra';
-    end
-end
-headshape.label{1} = 'na';
-headshape.label{2} = 'lpa';
-headshape.label{3} = 'rpa';
+headshape.label = tbl.Label(4:end);
 %% Visualize the headshape and electrodes
 ft_plot_headshape(headshape);
 hold on;
@@ -177,9 +138,12 @@ ft_plot_sens(elec_unaligned, 'facecolor', ...
 %% first align the electrodes to the MRI
 
 % best to read these out from MRICroGL
-nas_vox  =  [96, 219, 135];%
-lpa_vox =  [12 122 93];% 
-rpa_vox =  [178 120 96];%
+% nas_vox  =  [96, 219, 135];%
+% lpa_vox =  [12 122 93];% 
+% rpa_vox =  [178 120 96];%
+nas_vox = [99 219 128];
+lpa_vox = [10 123 92];
+rpa_vox = [182 123 92];
 transm = mri_orig.transform;
 % bring the fiducials from voxel-space to headspace
 nas = ft_warp_apply(transm, nas_vox, 'homogenous');
@@ -205,34 +169,45 @@ rpa = ft_warp_apply(transm, rpa_vox, 'homogenous');
 %% 
 %% check if the mri has been scaled
 % Compute the scaling factors
-scaling_factors = sqrt(sum(transm(1:3, 1:3).^2, 1));
-
-% Display the scaling factors
-disp('Scaling factors:');
-disp(scaling_factors);
-%% scale the elec to MRI?
-elec_unaligned.elecpos = ...
-    elec_unaligned.elecpos./scaling_factors;
-elec_unaligned.chanpos = elec_unaligned.elecpos;
+% scaling_factors = sqrt(sum(transm(1:3, 1:3).^2, 1));
+% 
+% % Display the scaling factors
+% disp('Scaling factors:');
+% disp(scaling_factors);
+% %% scale the elec to MRI?
+% elec_unaligned.elecpos = ...
+%     elec_unaligned.elecpos./scaling_factors;
+% elec_unaligned.chanpos = elec_unaligned.elecpos;
 %% now we can align based on the fiducial positions
-
 elec_mri.elecpos = [
   nas
   lpa
   rpa
   ];
-elec_mri.label = {'na', 'lpa', 'rpa'};
+elec_mri.label = {'nas', 'lpa', 'rpa'};
 elec_mri.unit  = 'mm';
-
+elec_unaligned.label(1:3) = elec_mri.label(1:3)
 % coregister the electrodes to the MRI using fiducials
 cfg = [];
+cfg.target.label    = {'nas', 'lpa', 'rpa'}
 cfg.method   = 'fiducial';
 cfg.template = elec_mri;
 cfg.elec     = elec_unaligned;
 cfg.feedback = 'yes';
-cfg.fiducial = {'na', 'lpa', 'rpa'};
+cfg.fiducial = {'nas', 'lpa', 'rpa'};
 %red before /magenta after /blue mri reference
 elec_aligned = ft_electroderealign(cfg);
+%%
+%%
+% alternative
+% interactively coregister the electrodes to the BEM head model
+% this is a visual check and refinement step
+cfg = [];
+cfg.method    = 'interactive';
+cfg.elec      = elec_aligned;
+cfg.headshape = hdm.bnd(1);
+elec_new = ft_electroderealign(cfg);
+
 
 
 %% plot together
@@ -241,27 +216,19 @@ figure;
 ft_plot_mesh(hdm.bnd,'facecolor','none'); 
 
 hold on;
-ft_plot_sens(elec_aligned, 'facecolor', [0 1 0], 'edgecolor', [1 0 0]);
+ft_plot_sens(elec_new, 'facecolor', [0 1 0], 'edgecolor', [1 0 0]);
 
-elec_fin = elec_aligned;
-elec_fin.label = elec_aligned.label(...
-    (ismember(elec_aligned.label, hdr.label)));
-elec_fin.elecpos     = elec_aligned.elecpos(...
-    (ismember(elec_aligned.label, hdr.label)),:);
+elec_fin = elec_new;
+elec_fin.label = elec_new.label(...
+    (ismember(elec_new.label, hdr.label)));
+elec_fin.elecpos     = elec_new.elecpos(...
+    (ismember(elec_new.label, hdr.label)),:);
 elec_fin.chanpos = elec_fin.elecpos;
-elec_fin.chantype     = elec_aligned.chantype(...
-    (ismember(elec_aligned.label, hdr.label)));
-elec_fin.chanunit     = elec_aligned.chanunit(...
-    (ismember(elec_aligned.label, hdr.label)));
-%%
-% alternative
-% % interactively coregister the electrodes to the BEM head model
-% % this is a visual check and refinement step
-% cfg = [];
-% cfg.method    = 'interactive';
-% cfg.elec      = elec_aligned;
-% cfg.headshape = hdm.bnd(1);
-% elec_new = ft_electroderealign(cfg);
+elec_fin.chantype     = elec_new.chantype(...
+    (ismember(elec_new.label, hdr.label)));
+elec_fin.chanunit     = elec_new.chanunit(...
+    (ismember(elec_new.label, hdr.label)));
+
 
 % alternative: align mri to electrodes
 % elec_unaligned.pos = elec_unaligned.elecpos;
